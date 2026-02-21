@@ -7,7 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Entity
-@Table(name = "payments")
+@Table(name = "payment")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -28,4 +28,7 @@ public class Payment {
 
     @Column(name = "card_number", nullable = false, length = 512)
     private String cardNumber; // store encrypted value
+
+    @Column(name = "iv", nullable = false, length = 512)
+    private String iv; // Base64-encoded IV used for encryption
 }
