@@ -9,6 +9,7 @@ import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
 import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
@@ -16,10 +17,10 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import tools.jackson.databind.ObjectMapper;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 public class WebhookService {
     private final ObjectMapper objectMapper;
@@ -29,10 +30,11 @@ public class WebhookService {
 
     public WebhookService(WebhookRepository webhookRepository,
                           WebhookLogRepository webhookLogRepository,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          RestTemplate restTemplate) {
         this.webhookRepository = webhookRepository;
         this.webhookLogRepository = webhookLogRepository;
-        this.restTemplate = new RestTemplate();
+        this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
     }
 
@@ -55,15 +57,15 @@ public class WebhookService {
         try{
             ResponseEntity<String> response = executeWebhookCall(webhook, paymentResponse);
 
-            if (response.getStatusCode().is2xxSuccessful()) {
-                handleSuccess(webhookLog, response);
-            } else {
-                handleFailure(webhookLog, new WebhookException(
-                        "Non-2xx response: " + response.getStatusCode()));
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new WebhookException(
+                        "Non-2xx response: " + response.getStatusCode());
             }
+
+            handleSuccess(webhookLog, response);
         } catch (Exception e) {
             handleFailure(webhookLog, e);
-            throw new WebhookException("Webhook failed due to network error: " + e.getMessage(), e);
+            throw new WebhookException("Webhook failed: " + e.getMessage(), e);
         }
     }
 
@@ -109,11 +111,16 @@ public class WebhookService {
         try {
             return objectMapper.writeValueAsString(object);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize payload", e);
+            throw new WebhookException("Failed to serialize payload", e);
         }
     }
     @Recover
     public void recover(Exception e, String url, PaymentResponse paymentResponse) {
-        System.out.println("Webhook permanently failed: " + url + ", reason: " + e.getMessage());
+        log.error("Webhook permanently failed after retries. url={}, transactionId={}, reason={}",
+                url,
+                paymentResponse != null ? paymentResponse.getTransactionId() : "unknown",
+                e.getMessage(),
+                e
+        );
     }
 }

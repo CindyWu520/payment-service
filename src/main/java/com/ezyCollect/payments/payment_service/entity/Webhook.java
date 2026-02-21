@@ -26,5 +26,5 @@ public class Webhook {
     private boolean active; // only active webhooks are called
 
     @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt = LocalDateTime.now();
+    private LocalDateTime createdAt;
 }

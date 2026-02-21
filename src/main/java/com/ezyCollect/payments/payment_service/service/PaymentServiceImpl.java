@@ -1,67 +1,58 @@
 package com.ezyCollect.payments.payment_service.service;
 
+import com.ezyCollect.payments.payment_service.dto.EncryptedCardInfo;
 import com.ezyCollect.payments.payment_service.dto.PaymentRequest;
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.Payment;
 import com.ezyCollect.payments.payment_service.exception.EncryptionException;
 import com.ezyCollect.payments.payment_service.exception.PaymentException;
 import com.ezyCollect.payments.payment_service.repository.PaymentRepository;
-import com.ezyCollect.payments.payment_service.util.AESUtil;
-import org.springframework.beans.factory.annotation.Value;
+import jakarta.transaction.Transactional;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
-
-import javax.crypto.SecretKey;
-import java.util.Base64;
 
 @Service
 public class PaymentServiceImpl implements PaymentService{
     private final PaymentRepository paymentRepository;
     private final WebhookService webhookService;
-    private final SecretKey secretKey;
+    private final CardEncryptionService cardEncryptionService;
 
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               WebhookService webhookService,
-                              @Value("${aes.secret.key}") String secretKeyString) {
+                              CardEncryptionService cardEncryptionService) {
         this.paymentRepository = paymentRepository;
         this.webhookService = webhookService;
-        this.secretKey = AESUtil.decodeKeyFromBase64(secretKeyString);
+        this.cardEncryptionService = cardEncryptionService;
     }
 
     @Override
     public PaymentResponse processPayment(PaymentRequest request) {
-        try {
-            // Generate IV per payment
-            byte[] iv = AESUtil.generateRandomIV();
-            // Encrypt the card number
-            String encryptedCard = AESUtil.encrypt(request.getCardNumber(), secretKey, iv);
-            // Convert IV to Base64 for DB storage
-            String ivBase64 = Base64.getEncoder().encodeToString(iv);
+        Payment payment = buildEncryptedPayment(request);
 
-            // Build the payment entity
-            Payment payment = Payment.builder()
+        // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
+        // TODO: Add metrics to track payment success and failure counts
+
+        Payment savedPayment = savePayment(payment);
+
+        // This line will not be reached if the payment gateway call fails
+        PaymentResponse response = buildSuccessResponse(savedPayment);
+
+        webhookService.triggerWebhooks(response);
+
+        return response;
+    }
+
+    private Payment buildEncryptedPayment(PaymentRequest request) {
+        try {
+            EncryptedCardInfo encryptedCardInfo = cardEncryptionService.encryptCard(request.getCardNumber());
+
+            return Payment.builder()
                     .firstName(request.getFirstName())
                     .lastName(request.getLastName())
                     .zipCode(request.getZipCode())
-                    .cardNumber(encryptedCard)
-                    .iv(ivBase64)
+                    .cardNumber(encryptedCardInfo.encryptedCard())
+                    .iv(encryptedCardInfo.iv())
                     .build();
-
-            // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
-
-            // Save payment in database
-            Payment savedPayment = paymentRepository.save(payment);
-
-            // Build response
-            PaymentResponse response = PaymentResponse.builder()
-                    .status("SUCCESS")
-                    .transactionId(savedPayment.getId().toString())
-                    .build();
-
-            // Trigger all registered webhooks asynchronously
-            webhookService.triggerWebhooks(response);
-
-            return response;
 
         } catch (EncryptionException e) {
             throw new PaymentException(
@@ -69,6 +60,13 @@ public class PaymentServiceImpl implements PaymentService{
                     "Failed to encrypt card number",
                     e
             );
+        }
+    }
+
+    @Transactional
+    private Payment savePayment(Payment payment) {
+        try {
+            return paymentRepository.save(payment);
         } catch (DataAccessException e) {
             throw new PaymentException(
                     "PAYMENT_PERSISTENCE_FAILED",
@@ -76,5 +74,12 @@ public class PaymentServiceImpl implements PaymentService{
                     e
             );
         }
+    }
+
+    private PaymentResponse buildSuccessResponse(Payment savedPayment) {
+        return PaymentResponse.builder()
+                .status("SUCCESS")
+                .transactionId(savedPayment.getId().toString())
+                .build();
     }
 }

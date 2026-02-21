@@ -5,12 +5,12 @@ import com.ezyCollect.payments.payment_service.dto.WebhookRequest;
 import com.ezyCollect.payments.payment_service.entity.Webhook;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
 import com.ezyCollect.payments.payment_service.service.WebhookReceivingService;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
 @RequestMapping("/v1/webhooks")
@@ -42,7 +42,7 @@ public class WebhookController {
     @PostMapping("/receive")
     public ResponseEntity<String> receiveWebhook(@RequestBody PaymentResponse payload,
                                                  @RequestHeader(value = "X-Signature", required = false) String signature,
-                                                 HttpServletRequest request) {
+                                                 HttpServletRequest request) throws JsonProcessingException {
         // TODO: Verify the signature to confirm the webhook is from a trusted source
 
         // Respond immediately
@@ -52,10 +52,5 @@ public class WebhookController {
         webhookReceivingService.processWebhookAsync(payload, request.getRequestURL().toString());
 
         return response;
-    }
-
-    @GetMapping
-    public ResponseEntity<List<Webhook>> listWebhooks() {
-        return ResponseEntity.ok(webhookRepository.findAllByActiveTrue());
     }
 }
