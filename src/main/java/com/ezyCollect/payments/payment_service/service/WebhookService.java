@@ -36,7 +36,6 @@ public class WebhookService {
         this.objectMapper = objectMapper;
     }
 
-    // Call all registered webhooks asynchronously
     @Async
     public void triggerWebhooks(PaymentResponse paymentResponse) {
         for (Webhook webhook : webhookRepository.findAllByActiveTrue()) {
@@ -45,7 +44,7 @@ public class WebhookService {
     }
 
     @Retryable(
-        retryFor  = { Exception.class },
+        retryFor  = { WebhookException.class },
         maxAttempts = 3,
         backoff = @Backoff(delay = 2000, multiplier = 2.0)
     )

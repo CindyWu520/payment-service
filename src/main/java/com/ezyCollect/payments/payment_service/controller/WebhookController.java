@@ -3,15 +3,11 @@ package com.ezyCollect.payments.payment_service.controller;
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.dto.WebhookRequest;
 import com.ezyCollect.payments.payment_service.entity.Webhook;
-import com.ezyCollect.payments.payment_service.entity.WebhookLog;
-import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
-import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
-import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
+import com.ezyCollect.payments.payment_service.service.WebhookReceivingService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,12 +16,14 @@ import java.util.List;
 @RequestMapping("/v1/webhooks")
 public class WebhookController {
     private final WebhookRepository webhookRepository;
-    private final WebhookLogRepository webhookLogRepository;
 
-    public WebhookController(WebhookRepository webhookRepository,
-                             WebhookLogRepository webhookLogRepository) {
+    private final WebhookReceivingService webhookReceivingService;
+
+    public WebhookController(
+            WebhookRepository webhookRepository,
+            WebhookReceivingService webhookReceivingService) {
         this.webhookRepository = webhookRepository;
-        this.webhookLogRepository = webhookLogRepository;
+        this.webhookReceivingService = webhookReceivingService;
     }
 
     @PostMapping("/register")
@@ -45,22 +43,15 @@ public class WebhookController {
     public ResponseEntity<String> receiveWebhook(@RequestBody PaymentResponse payload,
                                                  @RequestHeader(value = "X-Signature", required = false) String signature,
                                                  HttpServletRequest request) {
+        // TODO: Verify the signature to confirm the webhook is from a trusted source
 
-        WebhookLog webhookLog = WebhookLog.builder()
-                .url(String.valueOf(request.getRequestURL()))
-                .direction(WebhookDirection.INCOMING)
-                .payload(new ObjectMapper().writeValueAsString(payload))
-                .eventStatus(WebhookEventStatus.RECEIVED)
-                .httpStatus(200)
-                .receiveAt(LocalDateTime.now())
-                .responseBody("Webhook received successfully")
-                .retryCount(0).build();
+        // Respond immediately
+        ResponseEntity<String> response = ResponseEntity.ok("Webhook sent successfully");
 
-        webhookLogRepository.save(webhookLog);
+        // Offload heavy work to background
+        webhookReceivingService.processWebhookAsync(payload, request.getRequestURL().toString());
 
-        // Optionally: verify signature here (recommended in production)
-
-        return ResponseEntity.ok("Webhook sent successfully");
+        return response;
     }
 
     @GetMapping

@@ -47,7 +47,7 @@ public class PaymentServiceImpl implements PaymentService{
                     .iv(ivBase64)
                     .build();
 
-            // Process the payment via a payment gateway, e.g. Stripe, PayPal
+            // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
 
             // Save payment in database
             Payment savedPayment = paymentRepository.save(payment);
