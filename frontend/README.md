@@ -31,4 +31,9 @@ API response panel showing a successful `201 Created` response after submission.
 Form validation errors shown when required fields are missing or invalid.
 ![Payment Form_validation error01](docs/screenshots/validation.png)
 ![Payment Form_validation error02](docs/screenshots/validation2.png)
+---
+
+### Internal service error
+Triggered when a dependent service (e.g. database) is unavailable, the API returns a `500 Internal Server Error`.
+![Payment Form_internal_service_error](docs/screenshots/service_error.png)
 
