@@ -261,7 +261,7 @@ src/main/java/
 ├── util/           # utilities for cardNumber encryption
 └── exception/      # Custom exceptions and global handler
 ```
-
+---
 ## 📸 Evidence
 
 ### Webhook Log — Outgoing & Incoming Records
@@ -271,3 +271,13 @@ After a payment request is submitted, two records are created in the `webhook_lo
 - One for the **incoming** acknowledgement received back
 
 ![Webhook is called after payment](docs/screenshorts/webhook_log.png)
+
+---
+
+## 📝 TODO
+
+- [ ] Separate frontend into its own repository if the project grows in complexity
+- [ ] Add metrics to track payment success and failure counts (e.g. Spring Actuator + Micrometer)
+- [ ] Integrate a real payment gateway such as Stripe or PayPal to process live transactions
+- [ ] Verify webhook signature on incoming requests to confirm they originate from a trusted source
+- [ ] Process business operations triggered by incoming webhook events (e.g. order fulfillment, notifications)

@@ -23,11 +23,12 @@ The main payment form where users enter their details.
 ---
 
 ### Successful Payment Response
-Form validation errors shown when required fields are missing or invalid.
+API response panel showing a successful `201 Created` response after submission.
 ![Payment Form_success](docs/screenshots/success.png)
 ---
 
 ### Validation State
+Form validation errors shown when required fields are missing or invalid.
 ![Payment Form_validation error01](docs/screenshots/validation.png)
 ![Payment Form_validation error02](docs/screenshots/validation2.png)
 
