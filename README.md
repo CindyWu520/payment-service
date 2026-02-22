@@ -156,8 +156,6 @@ The service will be available at `http://localhost:8080`.
 
 ## 📌 API Endpoints
 
----
-
 ### Register Webhook
 
 **`POST /v1/webhooks/register`**

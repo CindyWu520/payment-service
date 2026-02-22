@@ -23,7 +23,7 @@ The main payment form where users enter their details.
 ---
 
 ### Successful Payment Response
-API response panel showing a successful `201 Created` response after submission.
+API response panel showing a successful `200 Created` response after submission.
 ![Payment Form_success](docs/screenshots/success.png)
 ---
 
