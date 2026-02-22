@@ -1,4 +1,4 @@
-package controller;
+package com.ezyCollect.payments.payment_service.controller;
 
 import com.ezyCollect.payments.payment_service.PaymentServiceApplication;
 import com.ezyCollect.payments.payment_service.dto.PaymentRequest;

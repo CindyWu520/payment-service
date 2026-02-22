@@ -1,9 +1,10 @@
-package service;
+package com.ezyCollect.payments.payment_service.service;
 
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.WebhookLog;
 import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
 import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
+import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
 import com.ezyCollect.payments.payment_service.service.WebhookReceivingService;
@@ -52,7 +53,6 @@ class WebhookReceivingServiceTest {
         assertEquals(WebhookEventStatus.RECEIVED, savedLog.getEventStatus());
         assertEquals(200, savedLog.getHttpStatus());
         assertEquals("Webhook received successfully", savedLog.getResponseBody());
-        assertEquals(0, savedLog.getRetryCount());
 
         // Verify payload was serialized correctly
         assertTrue(savedLog.getPayload().contains("\"transactionId\":\"tx123\""));
@@ -71,7 +71,7 @@ class WebhookReceivingServiceTest {
         String url = "https://example.com/webhook";
 
         // Make the repository throw JsonProcessingException wrapped in WebhookException
-        doThrow(new WebhookException("DB failure"))
+        doThrow(new WebhookException(ErrorCode.INTERNAL_ERROR, "DB failure"))
                 .when(webhookLogRepository).save(any(WebhookLog.class));
 
         // Act & Assert

@@ -1,15 +1,13 @@
-package service;
+package com.ezyCollect.payments.payment_service.service;
 
 import com.ezyCollect.payments.payment_service.dto.EncryptedCardInfo;
 import com.ezyCollect.payments.payment_service.dto.PaymentRequest;
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.Payment;
 import com.ezyCollect.payments.payment_service.exception.EncryptionException;
+import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.PaymentException;
 import com.ezyCollect.payments.payment_service.repository.PaymentRepository;
-import com.ezyCollect.payments.payment_service.service.CardEncryptionService;
-import com.ezyCollect.payments.payment_service.service.PaymentServiceImpl;
-import com.ezyCollect.payments.payment_service.service.WebhookService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -17,6 +15,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -101,11 +100,11 @@ class PaymentServiceImplTest {
 
         PaymentException ex = assertThrows(PaymentException.class,
                 () -> paymentService.processPayment(request));
-        assertEquals("PAYMENT_ENCRYPTION_FAILED", ex.getErrorCode());
+        assertEquals(ErrorCode.INTERNAL_ERROR, ex.getErrorCode());
     }
 
     @Test
-    void testProcessPaymentPersistenceFailure() throws Exception {
+    void testProcessPaymentPersistenceFailure()  {
         PaymentRequest request = PaymentRequest.builder()
                 .firstName("John")
                 .lastName("Doe")
@@ -115,15 +114,15 @@ class PaymentServiceImplTest {
 
         // Mock encryption success
         EncryptedCardInfo encryptedCardInfo = new EncryptedCardInfo("encryptedCard", "ivBase64");
-        when(cardEncryptionService.encryptCard(anyString())).thenReturn(encryptedCardInfo);
+        when(cardEncryptionService.encryptCard(any())).thenReturn(encryptedCardInfo);
 
         // Simulate repository failure
-        when(paymentRepository.save(any(Payment.class)))
+        when(paymentRepository.save(any()))
                 .thenThrow(new DataAccessException("DB fail") {});
 
-        PaymentException ex = assertThrows(PaymentException.class,
-                () -> paymentService.processPayment(request));
-        assertEquals("PAYMENT_PERSISTENCE_FAILED", ex.getErrorCode());
+        var res = paymentService.processPayment(request);
+        assertEquals(ErrorCode.INTERNAL_ERROR.name(), res.getErrorMessage().toString());
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR.toString(), res.getStatus().toString());
     }
 
 }

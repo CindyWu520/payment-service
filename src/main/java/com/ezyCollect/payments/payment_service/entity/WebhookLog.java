@@ -48,9 +48,6 @@ public class WebhookLog {
     @Column(name = "http_status")
     private Integer httpStatus;
 
-    @Column(name = "retry_count", nullable = false)
-    private int retryCount;
-
     @Lob
     @Column(name = "response_body")
     private String responseBody;

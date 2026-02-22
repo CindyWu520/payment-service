@@ -1,4 +1,4 @@
-package controller;
+package com.ezyCollect.payments.payment_service.controller;
 
 import com.ezyCollect.payments.payment_service.PaymentServiceApplication;
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
@@ -57,7 +57,7 @@ class WebhookControllerTest {
         mockMvc.perform(post("/v1/webhooks/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.url").value("https://example.com/webhook"))
                 .andExpect(jsonPath("$.active").value(true));

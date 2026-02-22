@@ -2,41 +2,55 @@ package com.ezyCollect.payments.payment_service.controller;
 
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.dto.WebhookRequest;
+import com.ezyCollect.payments.payment_service.dto.WebhookResponse;
 import com.ezyCollect.payments.payment_service.entity.Webhook;
+import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
 import com.ezyCollect.payments.payment_service.service.WebhookReceivingService;
+import com.ezyCollect.payments.payment_service.service.WebhookService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.time.LocalDateTime;
 
 @RestController
 @RequestMapping("/v1/webhooks")
 public class WebhookController {
-    private final WebhookRepository webhookRepository;
-
     private final WebhookReceivingService webhookReceivingService;
+
+    private final WebhookService webhookService;
 
     public WebhookController(
             WebhookRepository webhookRepository,
-            WebhookReceivingService webhookReceivingService) {
-        this.webhookRepository = webhookRepository;
+            WebhookReceivingService webhookReceivingService,
+            WebhookService webhookService) {
         this.webhookReceivingService = webhookReceivingService;
+        this.webhookService = webhookService;
     }
 
     @PostMapping("/register")
-    public ResponseEntity<Webhook> registerWebhook(@RequestBody WebhookRequest request) {
+    public ResponseEntity<WebhookResponse> registerWebhook(@RequestBody @Valid WebhookRequest request) {
+        Webhook savedWebhook;
+        try {
+            savedWebhook = webhookService.registerWebhook(request);
+        } catch (WebhookException e) {
+            WebhookResponse response = WebhookResponse.builder()
+                    .url(request.getUrl())
+                    .active(false)
+                    .build();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
 
-        Webhook webhook = Webhook.builder()
-                .url(request.getUrl())
-                .active(true)
-                .createdAt(LocalDateTime.now())
+        WebhookResponse response = WebhookResponse.builder()
+                .id(savedWebhook.getId())
+                .url(savedWebhook.getUrl())
+                .active(savedWebhook.isActive())
+                .createdAt(savedWebhook.getCreatedAt())
                 .build();
 
-        Webhook saved = webhookRepository.save(webhook);
-        return ResponseEntity.ok(saved);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     @PostMapping("/receive")

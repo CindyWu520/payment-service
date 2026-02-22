@@ -5,12 +5,16 @@ import com.ezyCollect.payments.payment_service.dto.PaymentRequest;
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.Payment;
 import com.ezyCollect.payments.payment_service.exception.EncryptionException;
+import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.PaymentException;
 import com.ezyCollect.payments.payment_service.repository.PaymentRepository;
 import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class PaymentServiceImpl implements PaymentService{
     private final PaymentRepository paymentRepository;
@@ -28,18 +32,38 @@ public class PaymentServiceImpl implements PaymentService{
     @Override
     public PaymentResponse processPayment(PaymentRequest request) {
         Payment payment = buildEncryptedPayment(request);
+        Payment encryptedPayment;
 
-        // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
-        // TODO: Add metrics to track payment success and failure counts
+        try {
+            processPaymentViaGateway(payment);
 
-        Payment savedPayment = savePayment(payment);
+            // TODO: Add metrics to track payment success and failure counts
 
-        // This line will not be reached if the payment gateway call fails
-        PaymentResponse response = buildSuccessResponse(savedPayment);
+            encryptedPayment = savePayment(payment);
+        } catch (PaymentException e) {
+            log.warn("Payment error occurred: {}", e.getMessage());
+            return PaymentResponse.builder()
+                    .status(e.getHttpStatus().toString())
+                    .errorMessage(e.getErrorCode().toString())
+                    .build();
+        }
+
+        PaymentResponse response = buildSuccessResponse(encryptedPayment);
 
         webhookService.triggerWebhooks(response);
 
         return response;
+    }
+
+    private void processPaymentViaGateway(Payment payment) {
+        // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
+        boolean gatewaySuccess = true;
+        if (!gatewaySuccess) {
+            throw new PaymentException(
+                    ErrorCode.PAYMENT_DECLINED,
+                    "Payment was declined by gateway",
+                    HttpStatus.UNPROCESSABLE_ENTITY);
+        }
     }
 
     private Payment buildEncryptedPayment(PaymentRequest request) {
@@ -56,7 +80,8 @@ public class PaymentServiceImpl implements PaymentService{
 
         } catch (EncryptionException e) {
             throw new PaymentException(
-                    "PAYMENT_ENCRYPTION_FAILED",
+                    ErrorCode.INTERNAL_ERROR,
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     "Failed to encrypt card number",
                     e
             );
@@ -69,7 +94,8 @@ public class PaymentServiceImpl implements PaymentService{
             return paymentRepository.save(payment);
         } catch (DataAccessException e) {
             throw new PaymentException(
-                    "PAYMENT_PERSISTENCE_FAILED",
+                    ErrorCode.INTERNAL_ERROR,
+                    HttpStatus.INTERNAL_SERVER_ERROR,
                     "Failed to save payment record",
                     e
             );

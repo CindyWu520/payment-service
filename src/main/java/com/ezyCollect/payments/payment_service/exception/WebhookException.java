@@ -1,29 +1,34 @@
 package com.ezyCollect.payments.payment_service.exception;
 
+import lombok.Getter;
+import org.springframework.http.HttpStatus;
+
+@Getter
 public class WebhookException extends RuntimeException {
-    private final String errorCode;
+    private final ErrorCode errorCode;
+    private HttpStatus httpStatus;
 
-    public WebhookException(String message) {
+    public WebhookException(
+            ErrorCode errorCode,
+            HttpStatus httpStatus,
+            String message) {
         super(message);
-        this.errorCode = "WEBHOOK_FAILED";
+        this.errorCode = errorCode;
+        this.httpStatus = httpStatus;
     }
 
-    public WebhookException(String message, Throwable cause) {
-        super(message, cause);
-        this.errorCode = "WEBHOOK_FAILED";
-    }
-
-    public WebhookException(String errorCode, String message) {
+    public WebhookException(
+            ErrorCode errorCode,
+            String message) {
         super(message);
         this.errorCode = errorCode;
     }
 
-    public WebhookException(String errorCode, String message, Throwable cause) {
+    public WebhookException(
+            ErrorCode errorCode,
+            String message,
+            Throwable cause) {
         super(message, cause);
         this.errorCode = errorCode;
-    }
-
-    public String getErrorCode() {
-        return errorCode;
     }
 }

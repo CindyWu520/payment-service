@@ -27,13 +27,14 @@ public class GlobalExceptionHandler {
 
         ErrorResponse error = ErrorResponse.builder()
                 .errorCode(ex.getErrorCode())
+                .error(ex.getHttpStatus().getReasonPhrase())
+                .status(ex.getHttpStatus().value())
                 .message(ex.getMessage())
-                .status(HttpStatus.BAD_REQUEST.value())
                 .path(request.getRequestURI())
                 .timestamp(LocalDateTime.now())
                 .build();
 
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+        return ResponseEntity.status(ex.getHttpStatus()).body(error);
     }
 
     // ==============================
@@ -74,7 +75,7 @@ public class GlobalExceptionHandler {
         log.warn("Validation failed: {}", validationErrors);
 
         ErrorResponse error = ErrorResponse.builder()
-                .errorCode("VALIDATION_ERROR")
+                .errorCode(ErrorCode.INVALID_REQUEST)
                 .message(validationErrors)
                 .status(HttpStatus.BAD_REQUEST.value())
                 .path(request.getRequestURI())
@@ -95,7 +96,7 @@ public class GlobalExceptionHandler {
         log.error("Unexpected system error", ex);
 
         ErrorResponse error = ErrorResponse.builder()
-                .errorCode("INTERNAL_SERVER_ERROR")
+                .errorCode(ErrorCode.INTERNAL_ERROR)
                 .message("Something went wrong. Please contact support.")
                 .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
                 .path(request.getRequestURI())

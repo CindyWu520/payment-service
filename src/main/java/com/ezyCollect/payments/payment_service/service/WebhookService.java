@@ -1,23 +1,28 @@
 package com.ezyCollect.payments.payment_service.service;
 
 import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
+import com.ezyCollect.payments.payment_service.dto.WebhookRequest;
 import com.ezyCollect.payments.payment_service.entity.Webhook;
 import com.ezyCollect.payments.payment_service.entity.WebhookLog;
 import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
 import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
+import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
-import org.springframework.retry.annotation.Backoff;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.time.LocalDateTime;
 
 @Slf4j
@@ -41,7 +46,9 @@ public class WebhookService {
     @Async
     public void triggerWebhooks(PaymentResponse paymentResponse) {
         for (Webhook webhook : webhookRepository.findAllByActiveTrue()) {
-            sendWebhook(webhook, paymentResponse);
+            WebhookLog webhookLog = createWebhookLog(webhook, paymentResponse);
+            webhookLogRepository.save(webhookLog);
+            sendWebhook(webhook, webhookLog, paymentResponse);
         }
     }
 
@@ -50,33 +57,49 @@ public class WebhookService {
         maxAttempts = 3,
         backoff = @Backoff(delay = 2000, multiplier = 2.0)
     )
-    @Transactional
-    public void sendWebhook(Webhook webhook, PaymentResponse paymentResponse) {
-        WebhookLog webhookLog = createWebhookLog(webhook, paymentResponse);
+    public void sendWebhook(Webhook webhook,
+                            WebhookLog webhookLog,
+                            PaymentResponse paymentResponse) {
+        ResponseEntity<String> response;
 
-        try{
-            ResponseEntity<String> response = executeWebhookCall(webhook, paymentResponse);
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new WebhookException(
-                        "Non-2xx response: " + response.getStatusCode());
-            }
-
-            handleSuccess(webhookLog, response);
-        } catch (Exception e) {
-            handleFailure(webhookLog, e);
-            throw new WebhookException("Webhook failed: " + e.getMessage(), e);
+        try {
+            response = executeWebhookCall(webhook, paymentResponse);
+        } catch (ResourceAccessException ex) {
+            // Internet / timeout error
+            throw new WebhookException(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Network error while calling webhook",
+                    ex);
+        } catch (RestClientException ex) {
+            // Other HTTP client errors
+            throw new WebhookException(
+                    ErrorCode.INVALID_REQUEST,
+                    "HTTP client error while calling webhook",
+                    ex);
         }
+
+        // Separate non-2xx response
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new WebhookException(
+                    ErrorCode.INVALID_REQUEST,
+                    "Non-2xx response: " + response.getStatusCode());
+        }
+
+        handleSuccess(webhookLog, response);
     }
 
-    private void handleFailure(WebhookLog webhookLog, Exception ex) {
+    @Transactional
+    public void handleFailure(WebhookLog webhookLog, Exception ex) {
+
         webhookLog.setEventStatus(WebhookEventStatus.FAILED);
-        webhookLog.setRetryCount(webhookLog.getRetryCount() + 1);
         webhookLog.setHttpStatus(null);
         webhookLog.setResponseBody(ex.getMessage());
+        webhookLog.setSentAt(LocalDateTime.now());
+
         webhookLogRepository.save(webhookLog);
     }
 
+    @Transactional
     private void handleSuccess(WebhookLog webhookLog, ResponseEntity<String> response) {
         webhookLog.setHttpStatus(response.getStatusCode().value());
         webhookLog.setResponseBody(response.getBody());
@@ -95,32 +118,56 @@ public class WebhookService {
 
     private WebhookLog createWebhookLog(Webhook webhook, PaymentResponse paymentResponse) {
         String payload = convertToJson(paymentResponse);
-        WebhookLog webhookLog = WebhookLog.builder()
+         return WebhookLog.builder()
                 .webhookId(webhook.getId())
                 .direction(WebhookDirection.OUTGOING)
                 .url(webhook.getUrl())
                 .payload(payload)
                 .eventStatus(WebhookEventStatus.PENDING)
                 .sentAt(LocalDateTime.now())
-                .retryCount(0).build();
-
-        return webhookLogRepository.save(webhookLog);
+                .build();
     }
 
     private String convertToJson(Object object) {
         try {
             return objectMapper.writeValueAsString(object);
         } catch (Exception e) {
-            throw new WebhookException("Failed to serialize payload", e);
+            throw new WebhookException(
+                    ErrorCode.INVALID_REQUEST,
+                    "Failed to serialize payload",
+                    e);
         }
     }
     @Recover
-    public void recover(Exception e, String url, PaymentResponse paymentResponse) {
-        log.error("Webhook permanently failed after retries. url={}, transactionId={}, reason={}",
-                url,
+    public void recover(WebhookException ex,
+                        Webhook webhook,
+                        WebhookLog webhookLog,
+                        PaymentResponse paymentResponse) {
+        handleFailure(webhookLog, ex);
+        log.warn(
+                "Webhook permanently failed after retries. webhookId={}, transactionId={}, reason={}",
+                webhook.getId(),
                 paymentResponse != null ? paymentResponse.getTransactionId() : "unknown",
-                e.getMessage(),
-                e
+                ex.getMessage(),
+                ex
         );
+    }
+
+    public Webhook registerWebhook(WebhookRequest request) {
+        try {
+            Webhook webhook = Webhook.builder()
+                    .url(request.getUrl())
+                    .active(true)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            return webhookRepository.save(webhook);
+        } catch (Exception e) {
+            // Wrap DB exceptions in a custom runtime exception
+            throw new WebhookException(
+                    ErrorCode.DATABASE_ERROR,
+                    "Failed to save webhook to database",
+                    e
+            );
+        }
     }
 }

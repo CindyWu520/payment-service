@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class ErrorResponse {
-    private String errorCode;
+    private ErrorCode errorCode;
+    private String error;
     private String message;
     private int status;
     private String path;

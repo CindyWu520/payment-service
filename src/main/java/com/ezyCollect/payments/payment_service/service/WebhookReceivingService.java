@@ -4,9 +4,9 @@ import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.WebhookLog;
 import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
 import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
+import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.transaction.Transactional;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -45,12 +45,11 @@ public class WebhookReceivingService {
                     .httpStatus(200)
                     .receiveAt(LocalDateTime.now())
                     .responseBody("Webhook received successfully")
-                    .retryCount(0)
                     .build();
 
             webhookLogRepository.save(webhookLog);
         } catch (Exception e) {
-            throw new WebhookException("Failed to process webhook", e);
+            throw new WebhookException(ErrorCode.INTERNAL_ERROR,"Failed to process webhook", e);
         }
     }
 }
