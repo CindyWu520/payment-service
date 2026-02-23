@@ -114,7 +114,7 @@ class PaymentServiceImplTest {
     @DisplayName("Should throw PaymentException with CARD_ENCRYPTION_ERROR when encryption fails")
     void processPayment_encryptionFails_throwsPaymentException() {
         // Arrange
-        when(cardEncryptionService.encryptCard(request.getCardNumber()))
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
                 .thenThrow(new EncryptionException("Failed to encrypt card number"));
 
         // Act & Assert

@@ -88,7 +88,7 @@ class WebhookControllerTest {
     }
 
     @Test
-    @DisplayName("Should return empty body on successful registration")
+    @DisplayName("Should return Webhook register successfully on successful registration")
     void registerWebhook_success_returnsEmptyBody() throws Exception {
         // Arrange
         when(webhookService.registerWebhook(any())).thenReturn(savedWebhook);
@@ -98,7 +98,7 @@ class WebhookControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(validWebhookRequest)))
                 .andExpect(status().isCreated())
-                .andExpect(content().string(""));
+                .andExpect(content().string("Webhook register successfully"));
     }
 
     // ─── POST /register — Validation Errors ──────────────────────────────────
