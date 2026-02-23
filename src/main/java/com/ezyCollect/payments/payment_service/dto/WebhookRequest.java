@@ -2,17 +2,13 @@ package com.ezyCollect.payments.payment_service.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import org.hibernate.validator.constraints.URL;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
-public class WebhookRequest {
-    @NotBlank(message = "Webhook URL cannot be blank")
-    @Size(max = 255, message = "Webhook URL must not exceed 255 characters")
-    private String url;
-}
+public record WebhookRequest (
+        @URL(message = "Must be a valid URL")
+        @NotBlank(message = "Webhook URL cannot be blank")
+        @Size(max = 255, message = "Webhook URL must not exceed 255 characters")
+        String url
+) {}

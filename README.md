@@ -180,7 +180,20 @@ The service will be available at `http://localhost:8080`.
 }
 ```
 
-**Response:** `201 Created`
+**Response:** `200 ok`
+
+### Receive webhook
+
+**`POST /v1/webhooks/receive`**
+
+```json
+{
+  "transactionId": "tx123456",
+  "status": "SUCCESS"
+}
+```
+
+**Response:** `200 ok`
 
 ---
 
@@ -228,11 +241,11 @@ All API failures return a consistent error structure:
 
 ```json
 {
-  "timestamp": "2026-02-22T20:00:00Z",
-  "status": 422,
-  "errorCode": "CARD_DECLINED",
-  "message": "Payment declined by issuing bank",
-  "path": "/v1/payments"
+  "errorCode": "INTERNAL_ERROR",
+  "message": "Something went wrong. Please contact support.",
+  "status": 500,
+  "path": "/v1/payments",
+  "timestamp": "2026-02-22T20:00:00Z"
 }
 ```
 

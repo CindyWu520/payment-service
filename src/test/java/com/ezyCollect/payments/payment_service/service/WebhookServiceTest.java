@@ -12,143 +12,246 @@ import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
 import com.ezyCollect.payments.payment_service.repository.WebhookRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessException;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class WebhookServiceTest {
 
-    @Mock
-    private WebhookLogRepository webhookLogRepository;
-    @Mock
-    private WebhookRepository webhookRepository;
-    @Mock
-    private RestTemplate restTemplate;
-    @Mock
-    private ObjectMapper objectMapper;
+    @Mock private WebhookRepository webhookRepository;
+    @Mock private WebhookLogRepository webhookLogRepository;
+    @Mock private WebhookSenderService webhookSenderService;
+
     @InjectMocks
     private WebhookService webhookService;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     private Webhook webhook;
-    private WebhookLog webhookLog;
     private PaymentResponse paymentResponse;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
+        // Inject real ObjectMapper
+        var field = WebhookService.class.getDeclaredField("objectMapper");
+        field.setAccessible(true);
+        field.set(webhookService, objectMapper);
+
         webhook = Webhook.builder()
                 .id(1L)
-                .url("http://example.com/webhook")
+                .url("http://localhost:8080/v1/webhooks/receive")
                 .active(true)
-                .build();
-
-        webhookLog = webhookLog.builder()
-                .id(1L)
-                .webhookId(webhook.getId())
-                .direction(WebhookDirection.OUTGOING)
-                .url(webhook.getUrl())
-                .payload("{\"transactionId\":\"tx123\"}")
-                .eventStatus(WebhookEventStatus.PENDING)
-                .httpStatus(200)
-                .responseBody("Webhook sent successfully")
-                .sentAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.now())
                 .build();
 
         paymentResponse = PaymentResponse.builder()
-                .transactionId("tx123")
                 .status("SUCCESS")
+                .transactionId("42")
                 .build();
     }
 
+    // ─── triggerWebhooks ──────────────────────────────────────────────────────
+
     @Test
-    void testRegisterWebhook_Success() {
-        WebhookRequest request = new WebhookRequest(webhook.getUrl());
+    @DisplayName("Should save webhook log and trigger send for each active webhook")
+    void triggerWebhooks_success_savesLogAndTriggersSend() {
+        // Arrange
+        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of(webhook));
+        when(webhookLogRepository.save(any(WebhookLog.class))).thenAnswer(i -> i.getArgument(0));
+
+        // Act
+        webhookService.triggerWebhooks(paymentResponse);
+
+        // Assert
+        verify(webhookLogRepository).save(any(WebhookLog.class));
+        verify(webhookSenderService).sendWebhook(eq(webhook), any(WebhookLog.class), eq(paymentResponse));
+    }
+
+    @Test
+    @DisplayName("Should create webhook log with correct fields")
+    void triggerWebhooks_createsLogWithCorrectFields() throws Exception {
+        // Arrange
+        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of(webhook));
+        when(webhookLogRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        // Act
+        webhookService.triggerWebhooks(paymentResponse);
+
+        // Assert
+        ArgumentCaptor<WebhookLog> captor = ArgumentCaptor.forClass(WebhookLog.class);
+        verify(webhookLogRepository).save(captor.capture());
+
+        WebhookLog savedLog = captor.getValue();
+        assertThat(savedLog.getWebhookId()).isEqualTo(1L);
+        assertThat(savedLog.getDirection()).isEqualTo(WebhookDirection.OUTGOING);
+        assertThat(savedLog.getUrl()).isEqualTo(webhook.getUrl());
+        assertThat(savedLog.getEventStatus()).isEqualTo(WebhookEventStatus.PENDING);
+        assertThat(savedLog.getSentAt()).isNotNull();
+        assertThat(savedLog.getPayload()).isEqualTo(objectMapper.writeValueAsString(paymentResponse));
+    }
+
+    @Test
+    @DisplayName("Should do nothing when no active webhooks exist")
+    void triggerWebhooks_noActiveWebhooks_doesNothing() {
+        // Arrange
+        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of());
+
+        // Act
+        webhookService.triggerWebhooks(paymentResponse);
+
+        // Assert
+        verify(webhookLogRepository, never()).save(any());
+        verify(webhookSenderService, never()).sendWebhook(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Should save log and trigger send for each webhook when multiple active webhooks exist")
+    void triggerWebhooks_multipleWebhooks_sendsToAll() {
+        // Arrange
+        Webhook webhook2 = Webhook.builder()
+                .id(2L)
+                .url("http://example.com/webhook")
+                .active(true)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of(webhook, webhook2));
+        when(webhookLogRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        // Act
+        webhookService.triggerWebhooks(paymentResponse);
+
+        // Assert
+        verify(webhookLogRepository, times(2)).save(any(WebhookLog.class));
+        verify(webhookSenderService, times(2)).sendWebhook(any(), any(), eq(paymentResponse));
+    }
+
+    @Test
+    @DisplayName("Should throw WebhookException when payload serialization fails")
+    void triggerWebhooks_serializationFails_throwsWebhookException() throws Exception {
+        // Arrange
+        ObjectMapper brokenMapper = mock(ObjectMapper.class);
+        when(brokenMapper.writeValueAsString(any()))
+                .thenThrow(new RuntimeException("Serialization failed"));
+
+        var field = WebhookService.class.getDeclaredField("objectMapper");
+        field.setAccessible(true);
+        field.set(webhookService, brokenMapper);
+
+        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of(webhook));
+
+        // Act & Assert
+        WebhookException ex = catchThrowableOfType(
+                () -> webhookService.triggerWebhooks(paymentResponse),
+                WebhookException.class
+        );
+
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.WEBHOOK_PAYLOAD_SERIALIZATION_FAILED);
+        verify(webhookLogRepository, never()).save(any());
+        verify(webhookSenderService, never()).sendWebhook(any(), any(), any());
+    }
+
+    // ─── registerWebhook ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should register webhook successfully when URL does not exist")
+    void registerWebhook_success_returnsWebhook() {
+        // Arrange
+        WebhookRequest request = new WebhookRequest("http://example.com/webhook");
+        when(webhookRepository.existsByUrl(request.url())).thenReturn(false);
         when(webhookRepository.save(any(Webhook.class))).thenReturn(webhook);
 
+        // Act
         Webhook result = webhookService.registerWebhook(request);
 
-        assertNotNull(result);
-        assertEquals(webhook.getUrl(), result.getUrl());
+        // Assert
+        assertThat(result).isNotNull();
+        assertThat(result.getId()).isEqualTo(1L);
         verify(webhookRepository).save(any(Webhook.class));
     }
 
     @Test
-    void testRegisterWebhook_DatabaseError() {
-        WebhookRequest request = new WebhookRequest(webhook.getUrl());
-        when(webhookRepository.save(any(Webhook.class)))
-                .thenThrow(new DataAccessException("DB down") {});
+    @DisplayName("Should save webhook with active=true, correct URL and createdAt")
+    void registerWebhook_savesCorrectFields() {
+        // Arrange
+        WebhookRequest request = new WebhookRequest("http://example.com/webhook");
+        when(webhookRepository.existsByUrl(request.url())).thenReturn(false);
+        when(webhookRepository.save(any())).thenReturn(webhook);
 
-        WebhookException ex = assertThrows(WebhookException.class,
-                () -> webhookService.registerWebhook(request));
+        // Act
+        webhookService.registerWebhook(request);
 
-        assertEquals(ErrorCode.DATABASE_ERROR, ex.getErrorCode());
-        assertTrue(ex.getMessage().contains("Failed to save webhook"));
+        // Assert
+        ArgumentCaptor<Webhook> captor = ArgumentCaptor.forClass(Webhook.class);
+        verify(webhookRepository).save(captor.capture());
+
+        Webhook saved = captor.getValue();
+        assertThat(saved.getUrl()).isEqualTo("http://example.com/webhook");
+        assertThat(saved.isActive()).isTrue();
+        assertThat(saved.getCreatedAt()).isNotNull();
     }
 
     @Test
-    void testTriggerWebhooks_Success() throws Exception {
-        when(webhookRepository.findAllByActiveTrue()).thenReturn(List.of(webhook));
-        when(objectMapper.writeValueAsString(paymentResponse)).thenReturn("{\"transactionId\":\"tx123\"}");
-        when(webhookLogRepository.save(any(WebhookLog.class))).thenReturn(webhookLog);
-        ResponseEntity<String> response = new ResponseEntity<>("OK", HttpStatus.OK);
-        when(restTemplate.postForEntity(anyString(), any(), eq(String.class))).thenReturn(response);
+    @DisplayName("Should throw WebhookException with WEBHOOK_ALREADY_EXISTS when URL is duplicate")
+    void registerWebhook_duplicateUrl_throwsWebhookException() {
+        // Arrange
+        WebhookRequest request = new WebhookRequest("http://example.com/webhook");
+        when(webhookRepository.existsByUrl(request.url())).thenReturn(true);
 
-        webhookService.triggerWebhooks(paymentResponse);
+        // Act & Assert
+        WebhookException ex = catchThrowableOfType(
+                () -> webhookService.registerWebhook(request),
+                WebhookException.class
+        );
 
-        verify(webhookLogRepository, atLeastOnce()).save(any(WebhookLog.class));
-        verify(restTemplate).postForEntity(eq(webhook.getUrl()), eq(paymentResponse), eq(String.class));
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.WEBHOOK_ALREADY_EXISTS);
+        verify(webhookRepository, never()).save(any());
     }
 
     @Test
-    void testSendWebhook_Non2xxResponse() throws Exception {
-        ResponseEntity<String> response = new ResponseEntity<>("FAIL", HttpStatus.BAD_REQUEST);
-        when(restTemplate.postForEntity(anyString(), any(), eq(String.class))).thenReturn(response);
+    @DisplayName("Should throw WebhookException with WEBHOOK_REGISTER_FAILED when DB save fails")
+    void registerWebhook_dbSaveFails_throwsWebhookException() {
+        // Arrange
+        WebhookRequest request = new WebhookRequest("http://example.com/webhook");
+        when(webhookRepository.existsByUrl(request.url())).thenReturn(false);
+        when(webhookRepository.save(any())).thenThrow(new DataAccessException("DB error") {});
 
-        WebhookLog log = new WebhookLog();
-        WebhookException ex = assertThrows(WebhookException.class,
-                () -> webhookService.sendWebhook(webhook, log, paymentResponse));
+        // Act & Assert
+        WebhookException ex = catchThrowableOfType(
+                () -> webhookService.registerWebhook(request),
+                WebhookException.class
+        );
 
-        assertEquals(ErrorCode.INVALID_REQUEST, ex.getErrorCode());
-        assertTrue(ex.getMessage().contains("Non-2xx"));
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.WEBHOOK_REGISTER_FAILED);
     }
 
     @Test
-    void testSendWebhook_NetworkError() {
-        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
-                .thenThrow(new ResourceAccessException("Timeout"));
+    @DisplayName("Should not call save when duplicate URL check throws")
+    void registerWebhook_duplicateUrl_neverCallsSave() {
+        // Arrange
+        WebhookRequest request = new WebhookRequest("http://example.com/webhook");
+        when(webhookRepository.existsByUrl(request.url())).thenReturn(true);
 
-        WebhookLog log = new WebhookLog();
-        WebhookException ex = assertThrows(WebhookException.class,
-                () -> webhookService.sendWebhook(webhook, log, paymentResponse));
+        // Act
+        catchThrowableOfType(
+                () -> webhookService.registerWebhook(request),
+                WebhookException.class
+        );
 
-        assertEquals(ErrorCode.INTERNAL_ERROR, ex.getErrorCode());
-        assertTrue(ex.getMessage().contains("Network error"));
-    }
-
-    @Test
-    void testSendWebhook_HttpClientError() {
-        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
-                .thenThrow(new RestClientException("HTTP error"));
-
-        WebhookLog log = new WebhookLog();
-        WebhookException ex = assertThrows(WebhookException.class,
-                () -> webhookService.sendWebhook(webhook, log, paymentResponse));
-
-        assertEquals(ErrorCode.INVALID_REQUEST, ex.getErrorCode());
-        assertTrue(ex.getMessage().contains("HTTP client error"));
+        // Assert
+        verify(webhookRepository, never()).save(any());
     }
 }

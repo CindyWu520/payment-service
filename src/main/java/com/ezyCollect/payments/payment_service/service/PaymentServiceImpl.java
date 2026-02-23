@@ -7,98 +7,77 @@ import com.ezyCollect.payments.payment_service.entity.Payment;
 import com.ezyCollect.payments.payment_service.exception.EncryptionException;
 import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.PaymentException;
+import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.PaymentRepository;
 import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService{
     private final PaymentRepository paymentRepository;
     private final WebhookService webhookService;
     private final CardEncryptionService cardEncryptionService;
 
-    public PaymentServiceImpl(PaymentRepository paymentRepository,
-                              WebhookService webhookService,
-                              CardEncryptionService cardEncryptionService) {
-        this.paymentRepository = paymentRepository;
-        this.webhookService = webhookService;
-        this.cardEncryptionService = cardEncryptionService;
-    }
-
     @Override
     public PaymentResponse processPayment(PaymentRequest request) {
+
         Payment payment = buildEncryptedPayment(request);
-        Payment encryptedPayment;
+        processPaymentViaGateway(payment);
+
+        // TODO: Add metrics to track payment success and failure counts
+
+        Payment savedPayment = savePayment(payment);
+        PaymentResponse response = buildSuccessResponse(savedPayment);
 
         try {
-            processPaymentViaGateway(payment);
-
-            // TODO: Add metrics to track payment success and failure counts
-
-            encryptedPayment = savePayment(payment);
-        } catch (PaymentException e) {
-            log.warn("Payment error occurred: {}", e.getMessage());
-            return PaymentResponse.builder()
-                    .status(e.getHttpStatus().toString())
-                    .errorMessage(e.getErrorCode().toString())
-                    .build();
+            webhookService.triggerWebhooks(response);
+        } catch (WebhookException e) {
+            // webhook failure should NOT fail the payment
+            log.warn("Webhook failed for payment {} : {}",
+                    savedPayment.getId(), e.getMessage());
         }
-
-        PaymentResponse response = buildSuccessResponse(encryptedPayment);
-
-        webhookService.triggerWebhooks(response);
 
         return response;
     }
 
     private void processPaymentViaGateway(Payment payment) {
-        // TODO: Process the payment via a payment gateway, e.g. Stripe, PayPal
+        // TODO : Process the payment via a payment gateway, e.g. Stripe, PayPal
         boolean gatewaySuccess = true;
         if (!gatewaySuccess) {
-            throw new PaymentException(
-                    ErrorCode.PAYMENT_DECLINED,
-                    "Payment was declined by gateway",
-                    HttpStatus.UNPROCESSABLE_ENTITY);
+            throw new PaymentException(ErrorCode.GATEWAY_TIMEOUT);
         }
     }
 
     private Payment buildEncryptedPayment(PaymentRequest request) {
         try {
-            EncryptedCardInfo encryptedCardInfo = cardEncryptionService.encryptCard(request.getCardNumber());
+            EncryptedCardInfo encryptedCardInfo = cardEncryptionService.encryptCard(request.cardNumber());
 
             return Payment.builder()
-                    .firstName(request.getFirstName())
-                    .lastName(request.getLastName())
-                    .zipCode(request.getZipCode())
+                    .firstName(request.firstName())
+                    .lastName(request.lastName())
+                    .zipCode(request.zipCode())
                     .cardNumber(encryptedCardInfo.encryptedCard())
                     .iv(encryptedCardInfo.iv())
                     .build();
 
         } catch (EncryptionException e) {
-            throw new PaymentException(
-                    ErrorCode.INTERNAL_ERROR,
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to encrypt card number",
-                    e
-            );
+            log.error("Card Encryption error during payment: {}", e.getMessage());
+            throw new PaymentException(ErrorCode.CARD_ENCRYPTION_ERROR, e);
         }
     }
 
     @Transactional
-    private Payment savePayment(Payment payment) {
+    public Payment savePayment(Payment payment) {
         try {
             return paymentRepository.save(payment);
         } catch (DataAccessException e) {
-            throw new PaymentException(
-                    ErrorCode.INTERNAL_ERROR,
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to save payment record",
-                    e
-            );
+            log.error("Database error during payment: {}", e.getMessage());
+            throw new PaymentException(ErrorCode.DATABASE_ERROR, e);
         }
     }
 

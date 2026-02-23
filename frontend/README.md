@@ -24,16 +24,18 @@ The main payment form where users enter their details.
 
 ### Successful Payment Response
 API response panel showing a successful `200 Created` response after submission.
-![Payment Form_success](docs/screenshots/success.png)
+![Payment Form_success](docs/screenshots/200_success.png)
 ---
 
 ### Validation State
-Form validation errors shown when required fields are missing or invalid.
+Form validation errors shown when required fields are missing.
 ![Payment Form_validation error01](docs/screenshots/validation.png)
-![Payment Form_validation error02](docs/screenshots/validation2.png)
+---
+Form validation errors shown when required card number is invalid, the API returns a `400 Validation Error`.
+![Payment Form_validation error02](docs/screenshots/400_invalid_card_number.png)
 ---
 
 ### Internal service error
 Triggered when a dependent service (e.g. database) is unavailable, the API returns a `500 Internal Server Error`.
-![Payment Form_internal_service_error](docs/screenshots/service_error.png)
+![Payment Form_internal_service_error](docs/screenshots/500_internal_sever_error.png)
 

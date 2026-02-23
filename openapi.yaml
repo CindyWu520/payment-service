@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Payment Processing API
-  description: API for creating payments and registering webhooks.
+  description: API for creating payments, registering and receiving webhooks.
   version: 1.0.0
 
 servers:
@@ -23,47 +23,59 @@ paths:
             schema:
               $ref: "#/components/schemas/PaymentRequest"
             example:
-              firstName: CINDY
-              lastName: WU
-              zipCode: 1000
-              cardNumber: 4242424242424242
+              firstName: "Cindy"
+              lastName: "Wu"
+              zipCode: "1000"
+              cardNumber: "4242424242424242"
       responses:
-        "200":
+        "201":
           description: Payment processed successfully
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaymentResponse"
               example:
-                transactionId: tx123456
-                status: SUCCESS
+                status: "SUCCESS"
+                transactionId: "tx123456"
         "400":
-          description: Payload failed validation
+          description: Request payload failed validation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PaymentResponse"
+                $ref: "#/components/schemas/ErrorResponse"
               example:
-                message: "The remote server returned an error: (400) Bad Request."
+                timestamp: "2026-02-23T10:00:00"
+                status: 400
+                errorCode: "INVALID_REQUEST"
+                message: "Request validation failed"
+                path: "/v1/payments"
+                fieldErrors:
+                  firstName: "must not be blank"
+                  cardNumber: "must not be blank"
         "422":
-          description: Payment Gateway failed to process payment
+          description: Payment declined by payment gateway
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PaymentResponse"
+                $ref: "#/components/schemas/ErrorResponse"
               example:
+                timestamp: "2026-02-23T10:00:00"
                 status: 422
-                errorMessage: PAYMENT_DECLINED
+                errorCode: "CARD_DECLINED"
+                message: "Payment declined by issuing bank"
+                path: "/v1/payments"
         "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PaymentResponse"
+                $ref: "#/components/schemas/ErrorResponse"
               example:
-                timestamp: 2026-02-22T10:00:00Z
+                timestamp: "2026-02-23T10:00:00"
                 status: 500
-                errorMessage: INTERNAL_ERROR
+                errorCode: "INTERNAL_SERVER_ERROR"
+                message: "An unexpected error occurred"
+                path: "/v1/payments"
 
   /v1/webhooks/register:
     post:
@@ -79,29 +91,98 @@ paths:
             schema:
               $ref: "#/components/schemas/WebhookRequest"
             example:
-              url: "http://webhook/example"
+              url: "http://localhost:8080/v1/webhooks/receive"
       responses:
         "201":
           description: Webhook registered successfully
+          content: {}
+        "400":
+          description: Request payload failed validation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WebhookResponse"
-        "400":
-          description: Payload failed validation
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                timestamp: "2026-02-23T10:00:00"
+                status: 400
+                errorCode: "INVALID_REQUEST"
+                message: "Request validation failed"
+                path: "/v1/webhooks/register"
+                fieldErrors:
+                  url: "must not be blank"
+        "409":
+          description: Webhook URL already registered
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
               example:
-                message: "The remote server returned an error: (400) Bad Request."
+                timestamp: "2026-02-23T10:00:00"
+                status: 409
+                errorCode: "WEBHOOK_ALREADY_EXISTS"
+                message: "Webhook URL already registered"
+                path: "/v1/webhooks/register"
         "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WebhookResponse"
+                $ref: "#/components/schemas/ErrorResponse"
               example:
-                url: "http://webhook/example"
-                active: false
+                timestamp: "2026-02-23T10:00:00"
+                status: 500
+                errorCode: "WEBHOOK_REGISTER_FAILED"
+                message: "Failed to register webhook"
+                path: "/v1/webhooks/register"
+
+  /v1/webhooks/receive:
+    post:
+      summary: Receive a webhook notification
+      description: Receives a webhook notification after payment is processed and queues it for async processing.
+      operationId: receiveWebhook
+      tags:
+        - Webhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentResponse"
+            example:
+              status: "SUCCESS"
+              transactionId: "tx123456"
+      responses:
+        "200":
+          description: Webhook received and queued for async processing
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Webhook sent successfully"
+        "400":
+          description: Request payload failed validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                timestamp: "2026-02-23T10:00:00"
+                status: 400
+                errorCode: "INVALID_REQUEST"
+                message: "Request body is missing or malformed"
+                path: "/v1/webhooks/receive"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                timestamp: "2026-02-23T10:00:00"
+                status: 500
+                errorCode: "INTERNAL_SERVER_ERROR"
+                message: "An unexpected error occurred"
+                path: "/v1/webhooks/receive"
 
 components:
   schemas:
@@ -116,38 +197,69 @@ components:
       properties:
         firstName:
           type: string
-          description: FirstName of card holder
-          example : Cindy
+          description: First name of card holder
+          example: "Cindy"
         lastName:
           type: string
-          description: LastName of card holder
-          example: wu
+          description: Last name of card holder
+          example: "Wu"
         zipCode:
           type: string
-          description: postCode
-          example: wu
+          description: Postal code of card holder
+          example: "1000"
         cardNumber:
           type: string
-          description: card number
-          example: 1234567890986
+          description: Card number
+          example: "4242424242424242"
 
     PaymentResponse:
       type: object
       required:
         - status
+        - transactionId
       properties:
-        transactionId:
-          type: string
-          description: Unique transaction identifier
-          example: tx123456
         status:
           type: string
           description: Payment status
-          example: SUCCESS
-        errorMessage:
+          example: "SUCCESS"
+        transactionId:
           type: string
-          description: Error message when payment fails
-          example: PAYMENT_DECLINED
+          description: Unique transaction identifier
+          example: "tx123456"
+
+    ErrorResponse:
+      type: object
+      required:
+        - errorCode
+        - message
+        - path
+        - status
+        - timestamp
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-02-23T10:00:00"
+        status:
+          type: integer
+          example: 400
+        errorCode:
+          type: string
+          example: "INVALID_REQUEST"
+        message:
+          type: string
+          example: "Request validation failed"
+        path:
+          type: string
+          example: "/v1/payments"
+        fieldErrors:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+          example:
+            firstName: "must not be blank"
+            cardNumber: "must not be blank"
 
     WebhookRequest:
       type: object
@@ -158,25 +270,4 @@ components:
           type: string
           format: uri
           description: URL that will receive webhook events
-          example: "http://webhook/example"
-
-    WebhookResponse:
-      type: object
-      required:
-        - url
-        - active
-      properties:
-        id:
-          type: integer
-          example: 1
-        url:
-          type: string
-          format: uri
-          example: "https://example.com/webhook"
-        active:
-          type: boolean
-          example: true
-        createdAt:
-          type: string
-          format: date-time
-          example: "2026-02-22T12:00:00"
+          example: "http://localhost:8080/v1/webhooks/receive"

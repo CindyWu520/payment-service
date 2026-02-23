@@ -4,19 +4,18 @@ import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.WebhookLog;
 import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
 import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
-import com.ezyCollect.payments.payment_service.exception.ErrorCode;
-import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
-import org.springframework.retry.annotation.Backoff;
-import org.springframework.retry.annotation.Retryable;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 
 @Service
+@Slf4j
 public class WebhookReceivingService {
     private final ObjectMapper objectMapper;
     private final WebhookLogRepository webhookLogRepository;
@@ -27,11 +26,6 @@ public class WebhookReceivingService {
     }
 
     @Async
-    @Retryable(
-        value = {WebhookException.class},
-        maxAttempts = 3,
-        backoff = @Backoff(delay = 2000, multiplier = 2) // Exponential backoff: 2s, 4s, 8s
-    )
     @Transactional
     public void processWebhookAsync(PaymentResponse payload, String url) {
         // TODO: Process the business operations triggered by an incoming webhook event
@@ -42,14 +36,15 @@ public class WebhookReceivingService {
                     .direction(WebhookDirection.INCOMING)
                     .payload(objectMapper.writeValueAsString(payload))
                     .eventStatus(WebhookEventStatus.RECEIVED)
-                    .httpStatus(200)
+                    .httpStatus(HttpStatus.OK.value())
                     .receiveAt(LocalDateTime.now())
                     .responseBody("Webhook received successfully")
                     .build();
 
             webhookLogRepository.save(webhookLog);
+            log.info("Business operations are processed successfully for payment: {}", payload.transactionId());
         } catch (Exception e) {
-            throw new WebhookException(ErrorCode.INTERNAL_ERROR,"Failed to process webhook", e);
+            log.error("Failed the business operations for payment: {}", payload.transactionId());
         }
     }
 }

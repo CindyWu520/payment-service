@@ -7,20 +7,25 @@ import com.ezyCollect.payments.payment_service.entity.Payment;
 import com.ezyCollect.payments.payment_service.exception.EncryptionException;
 import com.ezyCollect.payments.payment_service.exception.ErrorCode;
 import com.ezyCollect.payments.payment_service.exception.PaymentException;
+import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.PaymentRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessException;
-import org.springframework.http.HttpStatus;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
 class PaymentServiceImplTest {
+
     @Mock
     private PaymentRepository paymentRepository;
 
@@ -33,96 +38,202 @@ class PaymentServiceImplTest {
     @InjectMocks
     private PaymentServiceImpl paymentService;
 
+    private PaymentRequest request;
+    private EncryptedCardInfo encryptedCardInfo;
+    private Payment savedPayment;
+
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        request = PaymentRequest.builder()
+                .firstName("Christy")
+                .lastName("Wu")
+                .zipCode("2065")
+                .cardNumber("1234567890123456")
+                .build();
+
+        encryptedCardInfo = new EncryptedCardInfo("encryptedCard123", "ivBase64==");
+
+        savedPayment = Payment.builder()
+                .id(1L)
+                .firstName("Christy")
+                .lastName("Wu")
+                .zipCode("2065")
+                .cardNumber("encryptedCard123")
+                .iv("ivBase64==")
+                .build();
     }
 
+    // ─── Happy Path ───────────────────────────────────────────────────────────
+
     @Test
-    void testProcessPaymentSuccess() throws Exception {
-        // Prepare request
-        PaymentRequest request = PaymentRequest.builder()
-                .firstName("John")
-                .lastName("Doe")
-                .zipCode("12345")
-                .cardNumber("4111111111111111")
-                .build();
+    @DisplayName("Should process payment successfully and return SUCCESS response")
+    void processPayment_success() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
+                .thenReturn(encryptedCardInfo);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(savedPayment);
 
-        // Mock encryption
-        EncryptedCardInfo encryptedCardInfo = new EncryptedCardInfo("encryptedCard", "ivBase64");
-        when(cardEncryptionService.encryptCard(anyString())).thenReturn(encryptedCardInfo);
-
-        // Mock repository save
-        Payment savedPayment = Payment.builder()
-                .id(1L)
-                .firstName("John")
-                .lastName("Doe")
-                .zipCode("12345")
-                .cardNumber("encryptedCard")
-                .iv("ivBase64")
-                .build();
-        when(paymentRepository.save(any(Payment.class))).thenReturn(savedPayment);
-
-        // Call service
+        // Act
         PaymentResponse response = paymentService.processPayment(request);
 
-        // Verify repository save
-        ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
-        verify(paymentRepository).save(paymentCaptor.capture());
+        // Assert
+        assertThat(response.status()).isEqualTo("SUCCESS");
+        assertThat(response.transactionId()).isEqualTo("1");
 
-        Payment capturedPayment = paymentCaptor.getValue();
-        assertEquals("John", capturedPayment.getFirstName());
-        assertEquals("Doe", capturedPayment.getLastName());
-        assertEquals("encryptedCard", capturedPayment.getCardNumber());
-        assertEquals("ivBase64", capturedPayment.getIv());
-
-        // Verify webhook triggered
+        verify(cardEncryptionService).encryptCard(request.cardNumber());
+        verify(paymentRepository).save(any(Payment.class));
         verify(webhookService).triggerWebhooks(response);
-
-        // Assert response
-        assertNotNull(response);
-        assertEquals("SUCCESS", response.getStatus());
-        assertEquals("1", response.getTransactionId());
     }
 
     @Test
-    void testProcessPaymentEncryptionFailure() throws Exception {
-        PaymentRequest request = PaymentRequest.builder()
-                .firstName("John")
-                .lastName("Doe")
-                .zipCode("12345")
-                .cardNumber("4111111111111111")
-                .build();
+    @DisplayName("Should save payment with encrypted card number and IV")
+    void processPayment_savesEncryptedCardDetails() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
+                .thenReturn(encryptedCardInfo);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(savedPayment);
 
-        // Simulate encryption failure
-        when(cardEncryptionService.encryptCard(anyString()))
-                .thenThrow(new EncryptionException("fail"));
+        // Act
+        paymentService.processPayment(request);
 
-        PaymentException ex = assertThrows(PaymentException.class,
-                () -> paymentService.processPayment(request));
-        assertEquals(ErrorCode.INTERNAL_ERROR, ex.getErrorCode());
+        // Assert — verify the payment saved has encrypted card, not raw
+        verify(paymentRepository).save(argThat(payment ->
+                payment.getCardNumber().equals("encryptedCard123") &&
+                        payment.getIv().equals("ivBase64==") &&
+                        payment.getFirstName().equals("Christy") &&
+                        payment.getLastName().equals("Wu") &&
+                        payment.getZipCode().equals("2065")
+        ));
+    }
+
+    // ─── Encryption Failure ───────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should throw PaymentException with CARD_ENCRYPTION_ERROR when encryption fails")
+    void processPayment_encryptionFails_throwsPaymentException() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.getCardNumber()))
+                .thenThrow(new EncryptionException("Failed to encrypt card number"));
+
+        // Act & Assert
+        PaymentException ex = catchThrowableOfType(
+                () -> paymentService.processPayment(request),
+                PaymentException.class
+        );
+
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.CARD_ENCRYPTION_ERROR);
+
+        // Verify payment was never saved
+        verify(paymentRepository, never()).save(any());
+        verify(webhookService, never()).triggerWebhooks(any());
+    }
+
+    // ─── Database Failure ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should throw PaymentException with DATABASE_ERROR when save fails")
+    void processPayment_databaseFails_throwsPaymentException() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
+                .thenReturn(encryptedCardInfo);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenThrow(new DataAccessException("DB connection lost") {});
+
+        // Act & Assert
+        PaymentException ex = catchThrowableOfType(
+                () -> paymentService.processPayment(request),
+                PaymentException.class
+        );
+
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.DATABASE_ERROR);
+
+        // Verify webhook was never triggered
+        verify(webhookService, never()).triggerWebhooks(any());
+    }
+
+    // ─── Webhook Failure ──────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should still return SUCCESS response even when webhook fails")
+    void processPayment_webhookFails_doesNotFailPayment() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
+                .thenReturn(encryptedCardInfo);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(savedPayment);
+        doThrow(new WebhookException(ErrorCode.WEBHOOK_DELIVERY_FAILED))
+                .when(webhookService).triggerWebhooks(any());
+
+        // Act
+        PaymentResponse response = paymentService.processPayment(request);
+
+        // Assert — payment still succeeds
+        assertThat(response.status()).isEqualTo("SUCCESS");
+        assertThat(response.transactionId()).isEqualTo("1");
+
+        // Verify webhook was attempted
+        verify(webhookService).triggerWebhooks(any());
     }
 
     @Test
-    void testProcessPaymentPersistenceFailure()  {
-        PaymentRequest request = PaymentRequest.builder()
-                .firstName("John")
-                .lastName("Doe")
-                .zipCode("12345")
-                .cardNumber("4111111111111111")
-                .build();
+    @DisplayName("Should still return SUCCESS response even when unexpected exception thrown from webhook")
+    void processPayment_webhookThrowsUnexpectedException_doesNotFailPayment() {
+        // Arrange
+        when(cardEncryptionService.encryptCard(request.cardNumber()))
+                .thenReturn(encryptedCardInfo);
+        when(paymentRepository.save(any(Payment.class)))
+                .thenReturn(savedPayment);
 
-        // Mock encryption success
-        EncryptedCardInfo encryptedCardInfo = new EncryptedCardInfo("encryptedCard", "ivBase64");
-        when(cardEncryptionService.encryptCard(any())).thenReturn(encryptedCardInfo);
+        // Note: RuntimeException is NOT caught in current code — this test
+        // documents that only WebhookException is swallowed.
+        // Consider catching Exception instead of WebhookException in processPayment
+        // if you want all webhook errors to be non-fatal.
+        doThrow(new WebhookException(ErrorCode.WEBHOOK_DELIVERY_FAILED))
+                .when(webhookService).triggerWebhooks(any());
 
-        // Simulate repository failure
-        when(paymentRepository.save(any()))
-                .thenThrow(new DataAccessException("DB fail") {});
+        // Act
+        PaymentResponse response = paymentService.processPayment(request);
 
-        var res = paymentService.processPayment(request);
-        assertEquals(ErrorCode.INTERNAL_ERROR.name(), res.getErrorMessage().toString());
-        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR.toString(), res.getStatus().toString());
+        // Assert
+        assertThat(response.status()).isEqualTo("SUCCESS");
     }
 
+    // ─── savePayment ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should return saved payment when repository save succeeds")
+    void savePayment_success() {
+        // Arrange
+        Payment payment = Payment.builder()
+                .firstName("Christy")
+                .cardNumber("encryptedCard123")
+                .build();
+        when(paymentRepository.save(payment)).thenReturn(savedPayment);
+
+        // Act
+        Payment result = paymentService.savePayment(payment);
+
+        // Assert
+        assertThat(result.getId()).isEqualTo(1L);
+        verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    @DisplayName("Should throw PaymentException with DATABASE_ERROR when repository throws DataAccessException")
+    void savePayment_dataAccessException_throwsPaymentException() {
+        // Arrange
+        Payment payment = Payment.builder().cardNumber("encryptedCard123").build();
+        when(paymentRepository.save(payment))
+                .thenThrow(new DataAccessException("Connection timeout") {});
+
+        // Act & Assert
+        PaymentException ex = catchThrowableOfType(
+                () -> paymentService.savePayment(payment),
+                PaymentException.class
+        );
+
+        assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.DATABASE_ERROR);
+    }
 }

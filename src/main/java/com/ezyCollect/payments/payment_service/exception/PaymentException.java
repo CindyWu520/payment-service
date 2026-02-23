@@ -1,29 +1,18 @@
 package com.ezyCollect.payments.payment_service.exception;
 
 import lombok.Getter;
-import org.springframework.http.HttpStatus;
 
 @Getter
 public class PaymentException extends RuntimeException{
     private final ErrorCode errorCode;
-    private final HttpStatus httpStatus;
 
-    public PaymentException(
-            ErrorCode errorCode,
-            String message,
-            HttpStatus httpStatus) {
-        super(message);
+    public PaymentException(ErrorCode errorCode) {
+        super(errorCode.getMessage());
         this.errorCode = errorCode;
-        this.httpStatus = httpStatus;
     }
 
-    public PaymentException(
-            ErrorCode errorCode,
-            HttpStatus httpStatus,
-            String message,
-            Throwable cause) {
-        super(message, cause);
+    public PaymentException(ErrorCode errorCode, Throwable cause) {
+        super(errorCode.getMessage(), cause);
         this.errorCode = errorCode;
-        this.httpStatus = httpStatus;
     }
 }

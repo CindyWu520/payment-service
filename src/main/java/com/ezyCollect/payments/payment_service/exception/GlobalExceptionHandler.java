@@ -4,12 +4,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.validation.FieldError;
 
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -23,18 +26,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handlePaymentException(PaymentException ex,
                                                                 HttpServletRequest request) {
 
-        log.error("Payment error occurred: {}", ex.getMessage(), ex);
+        log.error("Payment error [{}]: {}", ex.getErrorCode(), ex.getMessage());
 
-        ErrorResponse error = ErrorResponse.builder()
-                .errorCode(ex.getErrorCode())
-                .error(ex.getHttpStatus().getReasonPhrase())
-                .status(ex.getHttpStatus().value())
-                .message(ex.getMessage())
-                .path(request.getRequestURI())
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        return ResponseEntity.status(ex.getHttpStatus()).body(error);
+        return ResponseEntity.
+                status(ex.getErrorCode().getHttpStatus()).
+                body(buildResponse(ex.getErrorCode(), request.getRequestURI()));
     }
 
     // ==============================
@@ -45,17 +41,10 @@ public class GlobalExceptionHandler {
             WebhookException ex,
             HttpServletRequest request) {
 
-        log.error("Webhook error occurred: {}", ex.getMessage(), ex);
+        log.error("Payment error [{}]: {}", ex.getErrorCode(), ex.getMessage());
 
-        ErrorResponse error = ErrorResponse.builder()
-                .errorCode(ex.getErrorCode())
-                .message("Webhook delivery failed")
-                .status(HttpStatus.SERVICE_UNAVAILABLE.value())
-                .path(request.getRequestURI())
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+        return ResponseEntity.status(ex.getErrorCode().getHttpStatus())
+                .body(buildResponse(ex.getErrorCode(), request.getRequestURI()));
     }
 
     // ==============================
@@ -66,23 +55,18 @@ public class GlobalExceptionHandler {
             MethodArgumentNotValidException ex,
             HttpServletRequest request) {
 
-        String validationErrors = ex.getBindingResult()
+        Map<String, String> validationErrors = ex.getBindingResult()
                 .getFieldErrors()
                 .stream()
-                .map(FieldError::getDefaultMessage)
-                .collect(Collectors.joining(", "));
+                .collect(Collectors.toMap(
+                        FieldError::getField,
+                        error -> Objects.requireNonNullElse(error.getDefaultMessage(), "Invalid value"),
+                        (existing, duplicate) -> existing
+                ));
 
         log.warn("Validation failed: {}", validationErrors);
 
-        ErrorResponse error = ErrorResponse.builder()
-                .errorCode(ErrorCode.INVALID_REQUEST)
-                .message(validationErrors)
-                .status(HttpStatus.BAD_REQUEST.value())
-                .path(request.getRequestURI())
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        return ResponseEntity.badRequest().body(error);
+        return ResponseEntity.badRequest().body(buildResponse(ErrorCode.VALIDATION_ERROR, request.getRequestURI(), validationErrors));
     }
 
     // ==============================
@@ -93,16 +77,43 @@ public class GlobalExceptionHandler {
             Exception ex,
             HttpServletRequest request) {
 
-        log.error("Unexpected system error", ex);
+        log.error("Unexpected system error: {}", ex.getMessage(), ex);
 
-        ErrorResponse error = ErrorResponse.builder()
-                .errorCode(ErrorCode.INTERNAL_ERROR)
-                .message("Something went wrong. Please contact support.")
-                .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
-                .path(request.getRequestURI())
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(buildResponse(ErrorCode.INTERNAL_SERVER_ERROR, request.getRequestURI()));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex,
+            HttpServletRequest request) {
+
+        log.warn("Malformed or missing request body: {}", ex.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(buildResponse(ErrorCode.REQUEST_BODY_MISSING, request.getRequestURI()));
+    }
+
+    private ErrorResponse buildResponse(ErrorCode errorCode, String path) {
+        return ErrorResponse.builder()
                 .timestamp(LocalDateTime.now())
+                .status(errorCode.getHttpStatus().value())
+                .errorCode(errorCode.getCode())
+                .message(errorCode.getMessage())
+                .path(path)
                 .build();
+    }
 
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    private ErrorResponse buildResponse(ErrorCode errorCode, String path, Map<String, String> fieldErrors) {
+        return ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(errorCode.getHttpStatus().value())
+                .errorCode(errorCode.getCode())
+                .message(errorCode.getMessage())
+                .path(path)
+                .fieldErrors(fieldErrors)
+                .build();
     }
 }

@@ -4,80 +4,184 @@ import com.ezyCollect.payments.payment_service.dto.PaymentResponse;
 import com.ezyCollect.payments.payment_service.entity.WebhookLog;
 import com.ezyCollect.payments.payment_service.enums.WebhookDirection;
 import com.ezyCollect.payments.payment_service.enums.WebhookEventStatus;
-import com.ezyCollect.payments.payment_service.exception.ErrorCode;
-import com.ezyCollect.payments.payment_service.exception.WebhookException;
 import com.ezyCollect.payments.payment_service.repository.WebhookLogRepository;
-import com.ezyCollect.payments.payment_service.service.WebhookReceivingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(MockitoExtension.class)
 class WebhookReceivingServiceTest {
 
+    @Mock
     private WebhookLogRepository webhookLogRepository;
-    private ObjectMapper objectMapper;
+
+    @InjectMocks
     private WebhookReceivingService webhookReceivingService;
 
+    // Use real ObjectMapper — no need to mock serialization
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private PaymentResponse paymentResponse;
+    private static final String WEBHOOK_URL = "http://localhost:8080/v1/webhooks/receive";
+
     @BeforeEach
-    void setUp() {
-        webhookLogRepository = mock(WebhookLogRepository.class);
-        objectMapper = new ObjectMapper();
-        webhookReceivingService = new WebhookReceivingService(webhookLogRepository, objectMapper);
+    void setUp() throws Exception {
+        // Inject real ObjectMapper
+        var field = WebhookReceivingService.class.getDeclaredField("objectMapper");
+        field.setAccessible(true);
+        field.set(webhookReceivingService, objectMapper);
+
+        paymentResponse = PaymentResponse.builder()
+                .status("SUCCESS")
+                .transactionId("42")
+                .build();
     }
 
+    // ─── Happy Path ───────────────────────────────────────────────────────────
+
     @Test
-    void processWebhookAsync_shouldSaveWebhookLog() throws Exception {
-        // Arrange
-        PaymentResponse payload = PaymentResponse.builder()
-                .transactionId("tx123")
-                .status("SUCCESS")
-                .errorMessage(null)
-                .build();
-
-        String url = "https://example.com/webhook";
-
+    @DisplayName("Should save webhook log with correct fields when payload is valid")
+    void processWebhookAsync_success_savesLogWithCorrectFields() {
         // Act
-        webhookReceivingService.processWebhookAsync(payload, url);
+        webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL);
 
-        // Assert
+        // Assert — capture the saved log and verify all fields
         ArgumentCaptor<WebhookLog> captor = ArgumentCaptor.forClass(WebhookLog.class);
-        verify(webhookLogRepository, times(1)).save(captor.capture());
+        verify(webhookLogRepository).save(captor.capture());
 
         WebhookLog savedLog = captor.getValue();
-        assertEquals(url, savedLog.getUrl());
-        assertEquals(WebhookDirection.INCOMING, savedLog.getDirection());
-        assertEquals(WebhookEventStatus.RECEIVED, savedLog.getEventStatus());
-        assertEquals(200, savedLog.getHttpStatus());
-        assertEquals("Webhook received successfully", savedLog.getResponseBody());
-
-        // Verify payload was serialized correctly
-        assertTrue(savedLog.getPayload().contains("\"transactionId\":\"tx123\""));
-        assertTrue(savedLog.getPayload().contains("\"status\":\"SUCCESS\""));
+        assertThat(savedLog.getUrl()).isEqualTo(WEBHOOK_URL);
+        assertThat(savedLog.getDirection()).isEqualTo(WebhookDirection.INCOMING);
+        assertThat(savedLog.getEventStatus()).isEqualTo(WebhookEventStatus.RECEIVED);
+        assertThat(savedLog.getHttpStatus()).isEqualTo(HttpStatus.OK.value());
+        assertThat(savedLog.getResponseBody()).isEqualTo("Webhook received successfully");
+        assertThat(savedLog.getReceiveAt()).isNotNull();
     }
 
     @Test
-    void processWebhookAsync_WebhookException() {
+    @DisplayName("Should serialize payload to JSON and save in webhook log")
+    void processWebhookAsync_success_savesSerializedPayload() throws Exception {
+        // Act
+        webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL);
+
+        // Assert — payload is JSON string of the PaymentResponse
+        ArgumentCaptor<WebhookLog> captor = ArgumentCaptor.forClass(WebhookLog.class);
+        verify(webhookLogRepository).save(captor.capture());
+
+        String expectedPayload = objectMapper.writeValueAsString(paymentResponse);
+        assertThat(captor.getValue().getPayload()).isEqualTo(expectedPayload);
+    }
+
+    @Test
+    @DisplayName("Should save webhook log once for each webhook received")
+    void processWebhookAsync_success_savesExactlyOnce() {
+        // Act
+        webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL);
+
+        // Assert
+        verify(webhookLogRepository, times(1)).save(any(WebhookLog.class));
+    }
+
+    // ─── Failure Handling ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should not throw exception when repository save fails — error is swallowed")
+    void processWebhookAsync_repositoryFails_doesNotThrow() {
         // Arrange
-        PaymentResponse payload = PaymentResponse.builder()
-                .transactionId("tx123")
+        doThrow(new RuntimeException("DB connection lost"))
+                .when(webhookLogRepository).save(any());
+
+        // Act & Assert — should NOT propagate exception (caught internally)
+        assertThatCode(() ->
+                webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL)
+        ).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Should not throw exception when ObjectMapper serialization fails")
+    void processWebhookAsync_serializationFails_doesNotThrow() throws Exception {
+        // Arrange — inject a broken ObjectMapper that always fails
+        ObjectMapper brokenMapper = mock(ObjectMapper.class);
+        when(brokenMapper.writeValueAsString(any()))
+                .thenThrow(new RuntimeException("Serialization failed"));
+
+        var field = WebhookReceivingService.class.getDeclaredField("objectMapper");
+        field.setAccessible(true);
+        field.set(webhookReceivingService, brokenMapper);
+
+        // Act & Assert — exception caught internally, nothing propagates
+        assertThatCode(() ->
+                webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL)
+        ).doesNotThrowAnyException();
+
+        // Verify log was never saved since serialization failed before save
+        verify(webhookLogRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should not save log when serialization fails")
+    void processWebhookAsync_serializationFails_neverSavesLog() throws Exception {
+        // Arrange
+        ObjectMapper brokenMapper = mock(ObjectMapper.class);
+        when(brokenMapper.writeValueAsString(any()))
+                .thenThrow(new RuntimeException("Serialization failed"));
+
+        var field = WebhookReceivingService.class.getDeclaredField("objectMapper");
+        field.setAccessible(true);
+        field.set(webhookReceivingService, brokenMapper);
+
+        // Act
+        webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL);
+
+        // Assert
+        verify(webhookLogRepository, never()).save(any());
+    }
+
+    // ─── Edge Cases ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should handle null transactionId in payload without throwing")
+    void processWebhookAsync_nullTransactionId_doesNotThrow() {
+        // Arrange
+        PaymentResponse nullTransactionResponse = PaymentResponse.builder()
                 .status("SUCCESS")
-                .errorMessage(null)
+                .transactionId(null)
                 .build();
 
-        String url = "https://example.com/webhook";
-
-        // Make the repository throw JsonProcessingException wrapped in WebhookException
-        doThrow(new WebhookException(ErrorCode.INTERNAL_ERROR, "DB failure"))
-                .when(webhookLogRepository).save(any(WebhookLog.class));
-
         // Act & Assert
-        WebhookException exception = assertThrows(WebhookException.class,
-                () -> webhookReceivingService.processWebhookAsync(payload, url));
+        assertThatCode(() ->
+                webhookReceivingService.processWebhookAsync(nullTransactionResponse, WEBHOOK_URL)
+        ).doesNotThrowAnyException();
 
-        assertEquals("Failed to process webhook", exception.getMessage());
+        verify(webhookLogRepository).save(any(WebhookLog.class));
+    }
+
+    @Test
+    @DisplayName("Should process multiple webhooks independently")
+    void processWebhookAsync_calledMultipleTimes_savesEachLog() {
+        // Arrange
+        PaymentResponse secondResponse = PaymentResponse.builder()
+                .status("SUCCESS")
+                .transactionId("99")
+                .build();
+
+        // Act
+        webhookReceivingService.processWebhookAsync(paymentResponse, WEBHOOK_URL);
+        webhookReceivingService.processWebhookAsync(secondResponse, WEBHOOK_URL);
+
+        // Assert — saved once per call
+        verify(webhookLogRepository, times(2)).save(any(WebhookLog.class));
     }
 }

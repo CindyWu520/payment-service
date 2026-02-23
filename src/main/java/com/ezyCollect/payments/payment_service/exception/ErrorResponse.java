@@ -1,21 +1,23 @@
 package com.ezyCollect.payments.payment_service.exception;
 
-import lombok.AllArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
+/**
+ * @param errorCode custom code. e.g. "PAYMENT_DECLINED"
+ * @param message   user-friendly message
+ */
+
 @Builder
-public class ErrorResponse {
-    private ErrorCode errorCode;
-    private String error;
-    private String message;
-    private int status;
-    private String path;
-    private LocalDateTime timestamp;
-}
+public record ErrorResponse(
+        String errorCode,
+        String message,
+        String path,
+        int status,
+        LocalDateTime timestamp,
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        Map<String, String> fieldErrors
+) {}

@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface WebhookRepository extends JpaRepository<Webhook, Long> {
     List<Webhook> findAllByActiveTrue(); // returns only active webhooks
+    boolean existsByUrl(String url);
 }
