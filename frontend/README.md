@@ -31,8 +31,8 @@ API response panel showing a successful `200 Created` response after submission.
 Form validation errors shown when required fields are missing.
 ![Payment Form_validation error01](docs/screenshots/validation.png)
 ---
-Form validation errors shown when required card number is invalid, the API returns a `400 Validation Error`.
-![Payment Form_validation error02](docs/screenshots/400_invalid_card_number.png)
+Form validation errors shown when required card number is invalid.
+![Payment Form_validation error02](docs/screenshots/Invalid_card_number.png)
 ---
 
 ### Internal service error

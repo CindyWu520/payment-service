@@ -1,6 +1,7 @@
 package com.ezyCollect.payments.payment_service.entity;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -27,6 +28,7 @@ public class Payment {
     private String zipCode;
 
     @Column(name = "card_number", nullable = false, length = 512)
+    @Pattern(regexp = "^\\d{13,19}$")
     private String cardNumber; // store encrypted value
 
     @Column(name = "iv", nullable = false, length = 512)

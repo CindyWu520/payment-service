@@ -14,9 +14,5 @@ spring:
       hibernate:
         format_sql: true
 
-  spring:
-    mvc:
-      throw-exception-if-no-handler-found: false
-
 server:
   port: 8080
